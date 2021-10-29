@@ -16,6 +16,7 @@ class ProphetModel:
                 location_id: int=None):
 
         df = pd.read_csv(data_path)
+        self.split_date = '2021-09-30'
 
         if location_id != None:
             df = df[df['department_id'] == location_id]
@@ -61,7 +62,7 @@ class ProphetModel:
 
         forecast = self.model.predict(future)
 
-        df_cv = cross_validation(self.model, initial='730 days', period='10 days', horizon = '180 days')
+        df_cv = cross_validation(self.model, initial='360 days', period='10 days', horizon = '180 days')
         perf = performance_metrics(df_cv)
         perf.to_csv(title_file)
 

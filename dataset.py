@@ -7,10 +7,10 @@ class Dataset:
         
         if location_id != None:
             df = df[df['department_id'] == location_id]
-        
-        self.series = df['sales'].values
 
-        self.split_train = round(0.8*df['sales'].size)
+        self.series = df
+
+        self.split_train = round(0.8*df.size)
         self.split_dataset()
 
     def split_dataset(self):

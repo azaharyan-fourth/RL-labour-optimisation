@@ -24,9 +24,10 @@ def create_simulation(args):
 
     agent = Agent()
     
-    simulator = Simulator(agent=None, env=env)
+    simulator = Simulator(agent, env=env)
 
-    simulator.play_one_episode()
+    for i in range(20):
+        simulator.play_one_episode(i)
 
 if __name__ == '__main__':
     args = parse_command_args()
