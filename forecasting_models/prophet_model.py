@@ -16,7 +16,7 @@ class ProphetModel:
                 location_id: int=None):
 
         df = pd.read_csv(data_path)
-        self.split_date = '2021-09-30'
+        self.split_date = '2020-02-01'
 
         if location_id != None:
             df = df[df['department_id'] == location_id]

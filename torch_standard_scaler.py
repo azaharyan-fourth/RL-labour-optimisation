@@ -6,6 +6,8 @@ class TorchStandardScaler:
   def fit(self, x):
     self.mean = x.mean(0, keepdim=True)
     self.std = x.std(0, unbiased=False, keepdim=True)
+
+    return self
     
   def transform(self, x):
     x -= self.mean
