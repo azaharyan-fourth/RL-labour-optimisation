@@ -8,12 +8,14 @@ class ReplayBuffer:
     def __init__(
         self, 
         size: int, 
+        obs_space: int,
+        output: int,
         batch_size: int = 32, 
         n_step: int = 1, 
         gamma: float = 0.99
     ):
-        self.obs_buf = np.zeros([size, 1,7], dtype=np.float32)
-        self.next_obs_buf = np.zeros([size, 1,7], dtype=np.float32)
+        self.obs_buf = np.zeros([size, 30, 7], dtype=np.float32)
+        self.next_obs_buf = np.zeros([size, 30, 7], dtype=np.float32)
         self.acts_buf = np.zeros([size], dtype=np.float32)
         self.rews_buf = np.zeros([size], dtype=np.float32)
         self.done_buf = np.zeros(size, dtype=np.float32)

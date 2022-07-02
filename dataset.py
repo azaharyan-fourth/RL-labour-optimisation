@@ -1,23 +1,29 @@
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 class Dataset:
-    def __init__(self, file_path, location_id=None):
-        df = pd.read_csv(f"{file_path}/all_normal_shifts_{location_id}.csv")
+        
+    def __init__(self, 
+                file_path: str, 
+                start_test_period: str):
+        df = pd.read_csv(file_path,
+                            parse_dates=['date'],
+                            date_parser=lambda x: datetime.strptime(str(x), '%Y-%m-%d'))
 
-        df = df.set_index('index')
+
+        df.drop('index', axis=1, inplace=True)
+        df = df.reset_index(drop=True)
+        df.index.name = 'index'
         df = df.sort_index()
         self.series = df
+        
+        self.split_dataset(start_test_period)
 
-        #self.split_train = round(0.8*df.size)
-        self.split_dataset()
-
-    def split_dataset(self):
+    def split_dataset(self, start_test_period):
         #train-test split dataset
-        self.dataset_train = self.series[self.series['date'] < '2020-01-01']
-        self.dataset_val = self.series[(self.series['date'] >= '2020-01-01') &
-                             (self.series['date'] < '2020-03-01')]
-
-    
-
-      
+        self.dataset_train = self.series[self.series['date'] < start_test_period]
+        #self.dataset_val = self.series[(self.series['date'] >= start_test_period)]
+        val_test = np.array_split(self.series[(self.series['date'] >= start_test_period)], 2)
+        self.dataset_val = val_test[0]
+        self.dataset_test = val_test[1]

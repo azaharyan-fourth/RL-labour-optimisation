@@ -52,6 +52,7 @@ class RainbowNetwork(nn.Module):
         q_atoms = value + advantage - advantage.mean(dim=1, keepdim=True)
         
         dist = F.softmax(q_atoms, dim=-1)
+        #dist = q_atoms
         dist = dist.clamp(min=1e-3)  # for avoiding nans
         
         return dist

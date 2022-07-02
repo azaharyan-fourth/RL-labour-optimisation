@@ -7,7 +7,7 @@ import numpy as np
 from agents.Rainbow_DQN.per import PrioritizedReplayBuffer
 from agents.Rainbow_DQN.rainbow_network import RainbowNetwork
 from agents.Rainbow_DQN.replay_memory import ReplayBuffer
-from environment import Environment
+from environment import TSEnvironment
 from typing import Deque, Dict, List, Tuple
 
 class RainbowDQNAgent:
@@ -35,21 +35,21 @@ class RainbowDQNAgent:
 
     def __init__(
         self, 
-        env: Environment,
+        env: TSEnvironment,
         memory_size: int = 40000,
         batch_size: int = 32,
-        target_update: int = 100,
-        gamma: float = 0.99,
+        target_update: int = 250,
+        gamma: float = 1,
         # PER parameters
         alpha: float = 0.2,
         beta: float = 0.6,
         prior_eps: float = 1e-6,
         # Categorical DQN parameters
         v_min: float = 0.0,
-        v_max: float = 200.0,
-        atom_size: int = 51,
+        v_max: float = 600.0,
+        atom_size: int = 301,
         # N-step Learning
-        n_step: int = 3,
+        n_step: int = 1,
     ):
 
         """Initialization.
@@ -69,13 +69,15 @@ class RainbowDQNAgent:
             atom_size (int): the unit number of support
             n_step (int): step number to calculate n-step td error
         """
-        obs_dim = 1*7
-        action_dim = len(env.action_space)
+        action_dim = env.action_space.n
+        obs_dim = env.n_observation_space*env.window
         
+
         self.env = env
         self.batch_size = batch_size
         self.target_update = target_update
         self.gamma = gamma
+
         # NoisyNet: All attributes related to epsilon are removed
         
         # device: cpu / gpu
@@ -89,7 +91,9 @@ class RainbowDQNAgent:
         self.beta = beta
         self.prior_eps = prior_eps
         self.memory = PrioritizedReplayBuffer(
-            memory_size, batch_size, alpha=alpha
+            memory_size,
+            obs_space=obs_dim,
+            output=action_dim, batch_size=batch_size, alpha=alpha
         )
 
         # memory for N-step Learning
@@ -97,7 +101,10 @@ class RainbowDQNAgent:
         if self.use_n_step:
             self.n_step = n_step
             self.memory_n = ReplayBuffer(
-                memory_size, batch_size, n_step=n_step, gamma=gamma
+                memory_size,
+                obs_space=obs_dim,
+                output=action_dim,
+                batch_size=batch_size, n_step=n_step, gamma=gamma
             )
             
         # Categorical DQN parameters
@@ -130,24 +137,26 @@ class RainbowDQNAgent:
     def select_action(self, state: Tensor) -> np.ndarray:
         """Select an action from the input state."""
 
-        if isinstance(state, pd.Series):
+        if isinstance(state, pd.DataFrame):
             state = state.to_numpy()
             state = torch.from_numpy(state)
         # NoisyNet: no epsilon greedy action selection
         state = state.unsqueeze(0)
+        self.dqn.eval()
         selected_action = self.dqn(state).argmax()
-        selected_action = selected_action.detach().cpu().numpy()
+        selected_action = selected_action
         
         if not self.is_test:
             self.transition = [state, selected_action]
         
+       #self.dqn.train()
         return selected_action
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.float64, bool]:
+    def step(self, action: np.ndarray, num_episode: int) -> Tuple[np.ndarray, np.float64, bool]:
         """Take an action and return the response of the env."""
-        next_state, reward, done = self.env.step(action)
+        next_state, reward, done = self.env.step(action, num_episode)
 
-        if next_state is not None and isinstance(next_state, pd.Series):
+        if next_state is not None and isinstance(next_state, pd.DataFrame):
             next_state = self.env.transform_data_for_nn(next_state)
 
         if not self.is_test:
@@ -168,6 +177,8 @@ class RainbowDQNAgent:
 
     def update_model(self) -> torch.Tensor:
         """Update the model by gradient descent."""
+        self.dqn.train()
+
         # PER needs beta to calculate weights
         samples = self.memory.sample_batch(self.beta)
         weights = torch.FloatTensor(
@@ -221,13 +232,13 @@ class RainbowDQNAgent:
 
         for episode in range(num_episodes):
             self.env.reset()
-            for index, values in enumerate(self.env.iter_train_dataset()):
+            for index, values in enumerate(self.env.iter_dataset(train=True)):
                 state = self.env.get_state(index + self.env.window)
-                if state is not None and isinstance(state, pd.Series):
+                if state is not None and isinstance(state, pd.DataFrame):
                     state = self.env.transform_data_for_nn(state)
 
                 action = self.select_action(state)
-                next_state, reward, done = self.step(action)
+                next_state, reward, done = self.step(action, episode)
 
                 state = next_state
                 score += reward
@@ -253,7 +264,9 @@ class RainbowDQNAgent:
                     if update_cnt % self.target_update == 0:
                         self._target_hard_update()
 
-            if episode & 5 == 0:
+            #self.env.reset_cron_iter()
+
+            if episode % 5 == 0 and episode > 0:
                 self.test()
 
             with open('rewards.txt', 'a') as fout:
@@ -270,20 +283,24 @@ class RainbowDQNAgent:
         done = False
         rewards, actions = [], []
         
-        for index, values in enumerate(self.env.iter_test_dataset(), 
+        for index, values in enumerate(self.env.iter_dataset(train=False), 
                                         start=len(self.env.dataset.dataset_train)):
-                state = self.env.get_state(index+self.env.window, is_test=True)
-                state_transformed = self.env.transform_data_for_nn(state)
+                state = self.env.get_state(index, is_test=True)
+                state_transformed = self.env.transform_data_for_nn(state, mode='val')
                 action = self.select_action(state_transformed)
                 next_state, reward, done = self.env.step(action, is_test=True)
 
                 rewards.append(reward)    
                 actions.append(action)
+                with open('test.txt', 'a') as fout:
+                    fout.write(f"{values[1]['date']}: {action} {reward}\n")
         
         with open('rewards_test.txt', 'a') as fout:
             fout.write(f"Episode rewards: {sum(rewards)}\n")
         with open('actions_test.txt', 'a') as fout:
             fout.write(f"Episode actions: {actions}\n")
+
+        self.dqn.train()
 
 
     def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:

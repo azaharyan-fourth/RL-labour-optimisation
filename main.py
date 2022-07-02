@@ -1,34 +1,31 @@
-import os
-from argparse import ArgumentParser, Namespace
 from agent_factory import AgentFactory
-from dataset import Dataset
-from environment import Environment
+from environment import TSEnvironment
+from utils import parse_command_args, get_json_params
 
-def parse_command_args():
-    parser = ArgumentParser()
+def run_process(args):
+    target_params = get_json_params(args.target_params)
+    labor_params = get_json_params(args.dependency_params)
 
-    parser.add_argument("-dp", "--data_path", dest="data_path",required=True,
-                        help="specify the path to the data file stored in CSV format")
-    parser.add_argument("-m", "--model", dest="model", required=True)
-    parser.add_argument("-ws", "--window_size", dest="window_size", default=30)
-    parser.add_argument("-ed", "--epsilon_decay", dest="epsilon_decay", default=0.001)
-
-    args = parser.parse_args()
-
-    return args
-
-def create_simulation(args):
-    location_id = 15356
-    dataset = Dataset(args.data_path, location_id)
-    env = Environment(dataset)
-    env.train_environment()
+    env = TSEnvironment(args.data_path,
+                        args.start_test_period,
+                        args.target, 
+                        args.dependency_feature,
+                        number_actions=int(args.number_actions),
+                        start_action=float(args.start_action),
+                        stop_action=float(args.stop_action),
+                        target_model_params=target_params,
+                        labor_model_params=labor_params,
+                        cost_feature=int(args.cost_feature),
+                        window=int(args.window_size),
+                        cron_expression=args.cron_expression
+                        )
+    env.train_environment_and_evaluate()
+    env.render()
 
     agent = AgentFactory.get_agent(env, args.model)
 
-    agent.train(151)
-    
+    agent.train(160)
 
 if __name__ == '__main__':
     args = parse_command_args()
-    create_simulation(args)
-    
+    run_process(args)

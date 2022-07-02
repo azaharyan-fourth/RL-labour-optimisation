@@ -1,26 +1,29 @@
+from os import device_encoding
 import random
-import math
+from numpy import apply_along_axis
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import pandas as pd
+from zmq import device
 from agents.DQN.DQN import DQN
 from agents.DQN.replay_memory import ReplayMemory, Transition
-from torch_standard_scaler import TorchStandardScaler
 from agents.DQN.per import PrioritizedExperienceReplay
+from policies.eps_decay_greedy import EpsDecayGreedyQPolicy
 
 class DQN_Agent:
     def __init__(self, env, epsilon=0.9):
         self.env = env
-        self.action_space = [-5,0,5]
+        self.policy = EpsDecayGreedyQPolicy(eps_start=1.0, 
+                                            eps_end=0.05,
+                                            eps_decay=5500)
         self.epsilon = epsilon
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         #init policy and target networks, optimizer and replay memory
-        self.policy_net = DQN(6*31, len(self.action_space)).to(self.device)
-        self.target_net = DQN(6*31, len(self.action_space)).to(self.device)
+        self.policy_net = DQN(self.env.n_observation_space*self.env.window, self.env.action_space.n).to(self.device)
+        self.target_net = DQN(self.env.n_observation_space*self.env.window, self.env.action_space.n).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
@@ -35,9 +38,6 @@ class DQN_Agent:
         #constants
         self.BATCH_SIZE = 32
         self.GAMMA = 1
-        self.EPS_START = 1.0
-        self.EPS_END = 0.05
-        self.EPS_DECAY = 1500
         self.TARGET_UPDATE = 200
 
         self.update_cnt = 0
@@ -45,39 +45,39 @@ class DQN_Agent:
         random.seed(10)
 
     def train(self, num_episodes=100):
-
+        """
+            Args:
+        """
         for i in range(num_episodes):
             self.env.reset()
 
             rewards, actions, losses = [], [], []
             episode_duration = len(self.env.dataset.dataset_train)-self.env.window
 
-            start_eps = self.get_eps_threshold(i*episode_duration)
-
-            for index, values in enumerate(self.env.iter_train_dataset()):
+            for index, values in enumerate(self.env.iter_dataset(train=True)):
                 state = self.env.get_state(index+self.env.window)
-                state_transformed = self.env.transform_data_for_nn(state)
+                state_transformed = self.env.transform_data_for_nn(state, mode='train')
                 action = self.act(state_transformed, steps_num=index + i*episode_duration)
-                next_state, reward, done = self.env.step(action)
+                next_state, reward, done = self.env.step(action, num_episode=i)
 
                 rewards.append(reward)    
                 actions.append(action)
 
                 if isinstance(next_state, pd.DataFrame):
-                    next_state = self.env.transform_data_for_nn(next_state)
+                    next_state = self.env.transform_data_for_nn(next_state, mode='train')
 
                 self.get_memory().push(state_transformed, action, reward, next_state)
                 loss = self.optimize_model(i, index)
                 losses.append(loss)
 
                 self.update_cnt += 1
+
+            #self.env.reset_cron_iter()
         
             with open('rewards.txt', 'a') as fout:
                 fout.write(f"Episode rewards: {sum(rewards)}\n")
             with open('actions.txt', 'a') as fout:
                 fout.write(f"Episode actions: {actions}\n")
-            with open('epsilons.txt', 'a') as fout:
-                fout.write(f"{start_eps}\n")
             with open('losses.txt', 'a') as fout:
                 fout.write(f"{sum(losses)}\n")
 
@@ -94,16 +94,20 @@ class DQN_Agent:
         done = False
         rewards, actions = [], []
         
-        for index, values in enumerate(self.env.iter_test_dataset(), 
+        for index, values in enumerate(self.env.iter_dataset(train=False), 
                                         start=len(self.env.dataset.dataset_train)):
-                state = self.env.get_state(index+self.env.window, is_test=True)
-                state_transformed = self.env.transform_data_for_nn(state)
+                state = self.env.get_state(index, is_test=True)
+                state_transformed = self.env.transform_data_for_nn(state, mode='val')
                 action = self.act(state_transformed, is_test=True)
                 next_state, reward, done = self.env.step(action, is_test=True)
 
                 rewards.append(reward)    
                 actions.append(action)
-        
+
+                with open('test.txt', 'a') as fout:
+                    fout.write(f"{values[1]['date']}: {action} {reward}\n")
+        with open('test.txt', 'a') as fout:
+                    fout.write(f"-------------\n")
         with open('rewards_test.txt', 'a') as fout:
             fout.write(f"Episode rewards: {sum(rewards)}\n")
         with open('actions_test.txt', 'a') as fout:
@@ -111,28 +115,22 @@ class DQN_Agent:
 
 
     def act(self, state, is_test=False, steps_num=0):
-        #return torch.tensor(2, device=self.device, dtype=torch.long)
+        #return torch.tensor(1, device=self.device)
 
         if isinstance(state, pd.DataFrame):
             state = state.to_numpy()
             state = torch.from_numpy(state)
 
-        sample = random.random()
+        # Get Q-values
+        state = state.unsqueeze(0) #add batch_size dimension
+        self.policy_net.eval()
+        output = self.policy_net(state.float()).squeeze(0)
 
-        eps_threshold = self.get_eps_threshold(steps_num)
+        # Get selected action using policy
+        action = self.policy.select_action(output, steps_num, is_test)
 
-        if sample > eps_threshold or is_test:
-            with torch.no_grad():
-                state = state.unsqueeze(0) #add batch_size dimension
-                self.policy_net.eval()
-                output = self.policy_net(state.float())
-                action_idx = torch.argmax(output)
-                return action_idx.clone().detach()
-                #return torch.tensor(action_idx, device=device, dtype=torch.long)
+        return action
 
-        else:
-            action_idx = random.randint(0, len(self.action_space) - 1)
-            return torch.tensor(action_idx, device=self.device, dtype=torch.long)
     
     def optimize_model(self, num_episode=0, num_step=0):
 
@@ -204,10 +202,6 @@ class DQN_Agent:
 
     def get_memory(self):
         return self.memory
-
-    def get_eps_threshold(self, steps_num=0):
-        return self.EPS_END + (self.EPS_START - self.EPS_END) * \
-            math.exp(-1. * steps_num / self.EPS_DECAY)
 
     def reduce_variance(self, reward_batch):
         a = torch.zeros(self.BATCH_SIZE)

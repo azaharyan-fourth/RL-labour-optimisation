@@ -1,24 +1,23 @@
-from numpy import mod
 import xgboost as xgb
 from xgboost import plot_importance, plot_tree
 import pandas as pd
-import matplotlib.pyplot as plt
 
 class XGBoostModel:
-    def __init__(self):
-        self.reg = xgb.XGBRegressor(n_estimators=640, max_depth=7, learning_rate=0.008)
+    def __init__(self,
+                **kwargs):
+        self.reg = xgb.XGBRegressor(**kwargs)
 
     def create_features(self, df, label=None):
         """
         Creates time series features from datetime index
         """
-
-        X = df[['HoursWorked', 'day_of_week',
-                'day_of_month', 'day_of_year', 'year']]
+        df_copy = df.copy()
+        df_copy.drop('date', axis=1, inplace=True)
         if label:
-            y = df[label]
-            return X, y
-        return X
+            y = df_copy.pop(label)
+            return df_copy, y
+            
+        return df_copy
 
     def train(self, X_train, y_train, eval_set=None):
 
